@@ -41,16 +41,19 @@ class MinNormSolver:
                 if (i,j) not in dps:
                     dps[(i, j)] = 0.0
                     for k in range(len(vecs[i])):
-                        dps[(i,j)] += torch.dot(vecs[i][k], vecs[j][k]).data[0]
+                        # dps[(i,j)] += torch.dot(vecs[i][k], vecs[j][k]).data[0]
+                        dps[(i,j)] += torch.tensordot(vecs[i][k], vecs[j][k]).data.cpu()
                     dps[(j, i)] = dps[(i, j)]
                 if (i,i) not in dps:
                     dps[(i, i)] = 0.0
                     for k in range(len(vecs[i])):
-                        dps[(i,i)] += torch.dot(vecs[i][k], vecs[i][k]).data[0]
+                        # dps[(i,i)] += torch.dot(vecs[i][k], vecs[i][k]).data[0]
+                        dps[(i,i)] += torch.tensordot(vecs[i][k], vecs[i][k]).data.cpu()
                 if (j,j) not in dps:
                     dps[(j, j)] = 0.0   
                     for k in range(len(vecs[i])):
-                        dps[(j, j)] += torch.dot(vecs[j][k], vecs[j][k]).data[0]
+                        # dps[(j, j)] += torch.dot(vecs[j][k], vecs[j][k]).data[0]
+                        dps[(j, j)] += torch.tensordot(vecs[j][k], vecs[j][k]).data.cpu()
                 c,d = MinNormSolver._min_norm_element_from2(dps[(i,i)], dps[(i,j)], dps[(j,j)])
                 if d < dmin:
                     dmin = d
@@ -78,7 +81,7 @@ class MinNormSolver:
         tm1 = -1.0*cur_val[proj_grad<0]/proj_grad[proj_grad<0]
         tm2 = (1.0 - cur_val[proj_grad>0])/(proj_grad[proj_grad>0])
         
-        skippers = np.sum(tm1<1e-7) + np.sum(tm2<1e-7)
+        # skippers = np.sum(tm1<1e-7) + np.sum(tm2<1e-7)
         t = 1
         if len(tm1[tm1>1e-7]) > 0:
             t = np.min(tm1[tm1>1e-7])
@@ -126,9 +129,9 @@ class MinNormSolver:
             v2v2 = 0.0
             for i in range(n):
                 for j in range(n):
-                    v1v1 += sol_vec[i]*sol_vec[j]*dps[(i,j)]
-                    v1v2 += sol_vec[i]*new_point[j]*dps[(i,j)]
-                    v2v2 += new_point[i]*new_point[j]*dps[(i,j)]
+                    v1v1 += sol_vec[i]*sol_vec[j]*dps[(i,j)].cpu().numpy()
+                    v1v2 += sol_vec[i]*new_point[j]*dps[(i,j)].cpu().numpy()
+                    v2v2 += new_point[i]*new_point[j]*dps[(i,j)].cpu().numpy()
             nc, nd = MinNormSolver._min_norm_element_from2(v1v1, v1v2, v2v2)
             new_sol_vec = nc*sol_vec + (1-nc)*new_point
             change = new_sol_vec - sol_vec
@@ -184,16 +187,45 @@ def gradient_normalizers(grads, losses, normalization_type):
     gn = {}
     if normalization_type == 'l2':
         for t in grads:
-            gn[t] = np.sqrt(np.sum([gr.pow(2).sum().data[0] for gr in grads[t]]))
+            # gn[t] = np.sqrt(np.sum([gr.pow(2).sum().data[0] for gr in grads[t]]))
+            gn[t] = np.sqrt(np.sum([gr.pow(2).sum().data.cpu() for gr in grads[t]]))
+            # gn[t] = torch.tensor([gr.pow(2).sum().data for gr in grads[t]]).sum().sqrt()
     elif normalization_type == 'loss':
         for t in grads:
             gn[t] = losses[t]
     elif normalization_type == 'loss+':
         for t in grads:
-            gn[t] = losses[t] * np.sqrt(np.sum([gr.pow(2).sum().data[0] for gr in grads[t]]))
+            # gn[t] = losses[t] * np.sqrt(np.sum([gr.pow(2).sum().data[0] for gr in grads[t]]))
+            gn[t] = losses[t] * np.sqrt(np.sum([gr.pow(2).sum().data.cpu() for gr in grads[t]]))
+            # gn[t] = losses[t] * torch.tensor([gr.pow(2).sum().data for gr in grads[t]]).sum().sqrt()
     elif normalization_type == 'none':
         for t in grads:
             gn[t] = 1.0
+    else:
+        print('ERROR: Invalid Normalization Type')
+    return gn
+
+def gradient_normalizers_list(grads, losses, normalization_type):
+    gn = []
+    # ks = list(grads.keys())
+    # losses_=[losses[k].detach().cpu().numpy() for k in ks]
+    # grads_=[grads[k][0].detach().cpu().numpy() for k in ks]
+    # xxx = []
+    if normalization_type == 'l2':
+        for g in grads:
+            gn.append(np.sqrt(np.sum(g**2)))
+
+    elif normalization_type == 'loss':
+        for l in losses:
+            gn.append(l)
+
+    elif normalization_type == 'loss+':
+        for g, l in zip(grads,losses):
+            gn.append(l * np.sqrt(np.sum(g**2)))
+
+    elif normalization_type == 'none':
+        for _ in grads:
+            gn.append(1.0)
     else:
         print('ERROR: Invalid Normalization Type')
     return gn

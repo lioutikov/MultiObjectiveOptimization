@@ -1,7 +1,9 @@
 import os
 import torch
 import numpy as np
-import scipy.misc as m
+# import scipy.misc as m
+import imageio as m
+from PIL import Image  
 import re
 import glob
 
@@ -28,26 +30,26 @@ class CELEBA(data.Dataset):
         self.files = {}
         self.labels = {}
 
-        self.label_file = self.root+"/Anno/list_attr_celeba.txt"
+        self.label_file = self.root+"/list_attr_celeba.csv"
         label_map = {}
         with open(self.label_file, 'r') as l_file:
-            labels = l_file.read().split('\n')[2:-1]
+            labels = l_file.read().split('\n')[1:]
         for label_line in labels:
-            f_name = re.sub('jpg', 'png', label_line.split(' ')[0])
-            label_txt = list(map(lambda x:int(x), re.sub('-1','0',label_line).split()[1:]))
+            f_name = re.sub('jpg', 'png', label_line.split(',')[0])
+            label_txt = list(map(lambda x:int(x), re.sub('-1','0',label_line).split(',')[1:]))
             label_map[f_name]=label_txt
 
-        self.all_files = glob.glob(self.root+'/Img/img_align_celeba_png/*.png')
-        with open(root+'//Eval/list_eval_partition.txt', 'r') as f:
+        self.all_files = glob.glob(self.root+'/img_align_celeba_png/*.png')
+        with open(root+'/list_eval_partition.csv', 'r') as f:
             fl = f.read().split('\n')
             fl.pop()
             if 'train' in self.split:
-                selected_files = list(filter(lambda x:x.split(' ')[1]=='0', fl))
+                selected_files = list(filter(lambda x:x.split(',')[1]=='0', fl))
             elif 'val' in self.split:
-                selected_files =  list(filter(lambda x:x.split(' ')[1]=='1', fl))
+                selected_files =  list(filter(lambda x:x.split(',')[1]=='1', fl))
             elif 'test' in self.split:
-                selected_files =  list(filter(lambda x:x.split(' ')[1]=='2', fl))
-            selected_file_names = list(map(lambda x:re.sub('jpg', 'png', x.split(' ')[0]), selected_files))
+                selected_files =  list(filter(lambda x:x.split(',')[1]=='2', fl))
+            selected_file_names = list(map(lambda x:re.sub('jpg', 'png', x.split(',')[0]), selected_files))
         
         base_path = '/'.join(self.all_files[0].split('/')[:-1])
         self.files[self.split] = list(map(lambda x: '/'.join([base_path, x]), set(map(lambda x:x.split('/')[-1], self.all_files)).intersection(set(selected_file_names))))
@@ -75,7 +77,7 @@ class CELEBA(data.Dataset):
         """
         img_path = self.files[self.split][index].rstrip()
         label = self.labels[self.split][index]
-        img = m.imread(img_path)
+        img = np.asarray(m.imread(img_path))
 
         if self.augmentations is not None:
             img = self.augmentations(np.array(img, dtype=np.uint8))
@@ -89,10 +91,13 @@ class CELEBA(data.Dataset):
         """transform
         Mean substraction, remap to [0,1], channel order transpose to make Torch happy
         """
+        img = np.array(Image.fromarray(img).resize( (self.img_size[0], self.img_size[1])))
         img = img[:, :, ::-1]
         img = img.astype(np.float64)
         img -= self.mean
-        img = m.imresize(img, (self.img_size[0], self.img_size[1]))
+        # img = m.imresize(img, (self.img_size[0], self.img_size[1]))
+        
+        
         # Resize scales images from 0 to 255, thus we need
         # to divide by 255.0
         img = img.astype(float) / 255.0

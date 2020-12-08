@@ -16,7 +16,7 @@ import torchvision
 import types
 
 from tqdm import tqdm
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 import losses
 import datasets
@@ -36,14 +36,15 @@ def train_multi_task(param_file):
         params = json.load(json_params)
 
 
-    exp_identifier = []
-    for (key, val) in params.items():
-        if 'tasks' in key:
-            continue
-        exp_identifier+= ['{}={}'.format(key,val)]
+    # exp_identifier = []
+    # for (key, val) in params.items():
+    #     if 'tasks' in key:
+    #         continue
+    #     exp_identifier+= ['{}={}'.format(key,val)]
 
-    exp_identifier = '|'.join(exp_identifier)
-    params['exp_id'] = exp_identifier
+    # exp_identifier = '|'.join(exp_identifier)
+    # params['exp_id'] = exp_identifier
+    params['exp_id'] = 11
 
     writer = SummaryWriter(log_dir='runs/{}_{}'.format(params['exp_id'], datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y")))
 
@@ -113,8 +114,9 @@ def train_multi_task(param_file):
                 if approximate_norm_solution:
                     optimizer.zero_grad()
                     # First compute representations (z)
-                    images_volatile = Variable(images.data, volatile=True)
-                    rep, mask = model['rep'](images_volatile, mask)
+                    with torch.no_grad():
+                        images_volatile = Variable(images.data, requires_grad=False)
+                        rep, mask = model['rep'](images_volatile, mask)
                     # As an approximate solution we only need gradients for input
                     if isinstance(rep, list):
                         # This is a hack to handle psp-net
@@ -130,7 +132,7 @@ def train_multi_task(param_file):
                         optimizer.zero_grad()
                         out_t, masks[t] = model[t](rep_variable, None)
                         loss = loss_fn[t](out_t, labels[t])
-                        loss_data[t] = loss.data[0]
+                        loss_data[t] = loss.data#[0] # the indexing doesn't work
                         loss.backward()
                         grads[t] = []
                         if list_rep:
@@ -147,7 +149,8 @@ def train_multi_task(param_file):
                         rep, mask = model['rep'](images, mask)
                         out_t, masks[t] = model[t](rep, None)
                         loss = loss_fn[t](out_t, labels[t])
-                        loss_data[t] = loss.data[0]
+                        # loss_data[t] = loss.data[0]
+                        loss_data[t] = loss.item()
                         loss.backward()
                         grads[t] = []
                         for param in model['rep'].parameters():
@@ -159,6 +162,7 @@ def train_multi_task(param_file):
                 for t in tasks:
                     for gr_i in range(len(grads[t])):
                         grads[t][gr_i] = grads[t][gr_i] / gn[t]
+
 
                 # Frank-Wolfe iteration to compute scales.
                 sol, min_norm = MinNormSolver.find_min_norm_element([grads[t] for t in tasks])
@@ -175,7 +179,8 @@ def train_multi_task(param_file):
             for i, t in enumerate(tasks):
                 out_t, _ = model[t](rep, masks[t])
                 loss_t = loss_fn[t](out_t, labels[t])
-                loss_data[t] = loss_t.data[0]
+                # loss_data[t] = loss_t.data[0]
+                loss_data[t] = loss_t.item()
                 if i > 0:
                     loss = loss + scale[t]*loss_t
                 else:
@@ -183,7 +188,8 @@ def train_multi_task(param_file):
             loss.backward()
             optimizer.step()
 
-            writer.add_scalar('training_loss', loss.data[0], n_iter)
+            # writer.add_scalar('training_loss', loss.data[0], n_iter)
+            writer.add_scalar('training_loss', loss.item(), n_iter)
             for t in tasks:
                 writer.add_scalar('training_loss_{}'.format(t), loss_data[t], n_iter)
 
@@ -198,24 +204,27 @@ def train_multi_task(param_file):
             met[t] = 0.0
 
         num_val_batches = 0
-        for batch_val in val_loader:
-            val_images = Variable(batch_val[0].cuda(), volatile=True)
-            labels_val = {}
+        with torch.no_grad():
+            for batch_val in val_loader:
+                val_images = Variable(batch_val[0].cuda(), requires_grad=False)
+                labels_val = {}
 
-            for i, t in enumerate(all_tasks):
-                if t not in tasks:
-                    continue
-                labels_val[t] = batch_val[i+1]
-                labels_val[t] = Variable(labels_val[t].cuda(), volatile=True)
+                for i, t in enumerate(all_tasks):
+                    if t not in tasks:
+                        continue
+                    labels_val[t] = batch_val[i+1]
+                    labels_val[t] = Variable(labels_val[t].cuda(), requires_grad=False)
 
-            val_rep, _ = model['rep'](val_images, None)
-            for t in tasks:
-                out_t_val, _ = model[t](val_rep, None)
-                loss_t = loss_fn[t](out_t_val, labels_val[t])
-                tot_loss['all'] += loss_t.data[0]
-                tot_loss[t] += loss_t.data[0]
-                metric[t].update(out_t_val, labels_val[t])
-            num_val_batches+=1
+                val_rep, _ = model['rep'](val_images, None)
+                for t in tasks:
+                    out_t_val, _ = model[t](val_rep, None)
+                    loss_t = loss_fn[t](out_t_val, labels_val[t])
+                    # tot_loss['all'] += loss_t.data[0]
+                    tot_loss['all'] += loss_t.item()
+                    # tot_loss[t] += loss_t.data[0]
+                    tot_loss[t] += loss_t.item()
+                    metric[t].update(out_t_val, labels_val[t])
+                num_val_batches+=1
 
         for t in tasks:
             writer.add_scalar('validation_loss_{}'.format(t), tot_loss[t]/num_val_batches, n_iter)
